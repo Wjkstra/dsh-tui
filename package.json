@@ -1,0 +1,53 @@
+{
+  "name": "dsh-cli",
+  "version": "0.1.0",
+  "description": "Terminal front door for DeepSeek Harness: a profile bundle that composes the terminal UI and ships the dsh-cli launcher.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "cordis",
+    "cli",
+    "terminal",
+    "tui",
+    "agent"
+  ],
+  "license": "MIT",
+  "author": {
+    "name": "wjping19"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://gitee.com/wjping19/dsh-cli.git"
+  },
+  "homepage": "https://gitee.com/wjping19/dsh-cli#readme",
+  "type": "module",
+  "bin": {
+    "dsh-cli": "./bin/dsh-cli.mjs"
+  },
+  "files": [
+    "bin",
+    "cordis.patch.yml",
+    "icon.svg",
+    "locale",
+    "README.md",
+    "README.zh.md"
+  ],
+  "engines": {
+    "node": "^22.19 || >=24"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": [
+        "./cordis.patch.yml",
+        "./node_modules/@deepseek-harness-tui/dsh-tui/cordis.patch.yml"
+      ]
+    }
+  },
+  "icon": "./icon.svg",
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-sdk-client": "0.2.2-rc.1",
+    "@deepseek-harness-tui/dsh-tui": "^0.19.0"
+  }
+}

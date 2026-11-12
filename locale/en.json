@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "dsh-cli",
+    "description": "Terminal front door for DeepSeek Harness: composes the terminal UI profile and ships the dsh-cli launcher."
+  }
+}

@@ -1,0 +1,7 @@
+# dsh-cli bundle patch.
+#
+# This layer is intentionally empty: the terminal front door itself comes from
+# the dsh-tui patch listed after this file in package.json's
+# `dsh.bundle.patch` array. Keep this file so a future release can add rows
+# (model route, persona, approval policy) without touching the composition.
+[]

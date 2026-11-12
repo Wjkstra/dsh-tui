@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "dsh-cli",
+    "description": "DeepSeek Harness 的终端入口：组合终端界面 profile，并附带 dsh-cli 启动命令。"
+  }
+}
