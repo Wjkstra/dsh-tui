@@ -1,6 +1,6 @@
 {
   "name": "dsh-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Terminal front door for DeepSeek Harness: a profile bundle that composes the terminal UI and ships the dsh-cli launcher.",
   "keywords": [
     "dsh",
