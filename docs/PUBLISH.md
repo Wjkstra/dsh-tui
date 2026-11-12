@@ -1,73 +1,47 @@
-# 发布到插件市场（dsh-cli）
+# dsh-cli 上架状态
 
-DSH 的「发现」页只读取**索引（index.json）**，索引条目是本仓库这样的 bundle 包。官方市场尚未上线，
-所以发布 = 把仓库推上 Gitee/GitHub + 托管一份 index.json + 在桌面端添加该索引地址。
+- 仓库：<https://github.com/Wjkstra/dsh-tui>
+- 最新版本：`0.1.2`（Git 标签 `v0.1.2`）
+- 市场索引：<https://raw.githubusercontent.com/Wjkstra/dsh-tui/main/docs/index.json>
 
-## 0. 前置
+索引由官方生成器产出，已包含 `dsh-cli` 条目（图标、中英文案、作者、来源提交、兼容声明）。
+GitHub Pages 未开启，也不需要：DSH 只要求索引是一个可访问的 https URL。
 
-- 仓库已就绪（本地已 `git init` 并打了 `v0.1.0` 标签）。
-- 生成索引需要 `pnpm` 与 DSH 源码 checkout：`D:\apps\deep\deepseek-harness`。
+## 在 DSH 中添加索引
 
-## 1. 创建远程仓库并推送
+桌面端需要挂载插件市场服务（`@deepseek-ai/dsh-plugin-market-bundle`）后，「插件 → 发现 →
+索引来源 → 添加」填入上面的 index.json 地址，即可安装 `dsh-cli` 到任意 profile。
 
-```bash
-cd C:\Users\wjping19\dsh-cli-pkg
-git remote add origin https://gitee.com/wjping19/dsh-cli.git   # 先在 Gitee 网页建空仓库
-git push -u origin master --tags
+对应的 Host 配置键（`plugin-market` 行）：
+
+```yaml
+- id: plugin-market
+  config:
+    indexes:
+      - https://raw.githubusercontent.com/Wjkstra/dsh-tui/main/docs/index.json
 ```
 
-> 版本号来自 Git 标签：`v0.1.0`。以后发新版改 `package.json` 的 version 并打同名标签。
+## 发新版
 
-## 2. 生成市场索引
+```bash
+# 改 package.json 的 version，然后
+git commit -am "release: x.y.z"
+git tag -a vX.Y.Z -m "dsh-cli X.Y.Z"
+git push origin main --tags
 
-在 checkout 里运行（`--input` 就是本仓库的 `plugins.txt`）：
-
-```powershell
+# 重新生成索引并提交
 cd D:\apps\deep\deepseek-harness
-pnpm --filter @deepseek-ai/dsh-plugin-market-generator start `
-  --input C:\Users\wjping19\dsh-cli-pkg\plugins.txt `
-  --output C:\Users\wjping19\dsh-cli-pkg\docs\index.json `
-  --title "dsh-cli Market" `
-  --description "Terminal front door for DeepSeek Harness"
+pnpm --filter @deepseek-ai/dsh-plugin-market-generator start \
+  --input C:\Users\wjping19\dsh-cli-pkg\plugins.txt \
+  --output C:\Users\wjping19\dsh-cli-pkg\docs\index.json \
+  --title "dsh-cli Market" --description "Terminal front door for DeepSeek Harness"
+cd C:\Users\wjping19\dsh-cli-pkg && git add docs/index.json && git commit -m "chore: market index" && git push
 ```
 
-成功后 `docs/index.json` 里会出现 `dsh-cli` 的条目（名称、版本、图标、作者、兼容范围）。
-把 `docs/index.json` 提交并推送：
+## 已知风险
 
-```bash
-cd C:\Users\wjping19\dsh-cli-pkg
-git add docs/index.json && git commit -m "chore: publish market index" && git push
-```
-
-## 3. 托管 index.json（二选一）
-
-- **GitHub Pages**：仓库 Settings → Pages → Source 选 `master` / `/docs`，得到
-  `https://<user>.github.io/dsh-cli/index.json`
-- **Gitee Pages**：仓库「服务 → Gitee Pages」开启（需实名），得到
-  `https://wjping19.gitee.io/dsh-cli/index.json`
-
-## 4. 在 DSH 里添加索引并安装
-
-桌面端 **插件 → 发现 → 索引来源 → 添加**，填入上面的 URL；刷新后即可看到 `dsh-cli`，
-安装到任意 profile，然后：
-
-```powershell
-dsh --profile <该 profile>      # 进入终端界面
-```
-
-## 5. 可选的 npm 分发
-
-如果之后拿到 npm 账号（且 `registry.npmjs.org` 可达）：
-
-```bash
-npm publish --access public
-npm install -g dsh-cli
-dsh-cli
-```
-
-## 备注
-
-- bundle 组合：本包 patch 只有一层空层，终端界面层直接引用依赖
-  `@deepseek-harness-tui/dsh-tui` 的 `cordis.patch.yml`（MIT，未复制代码）。
-- 兼容性：`@deepseek-ai/dsh` 依赖钉在 `0.2.2-rc.1`，与目标桌面版一致。
-- 索引生成器会读取默认分支与标签；私有仓库需要你的 Git 凭据可用。
+终端界面层来自 `@deepseek-harness-tui/dsh-tui@0.19.0` 的 patch。该 patch 里有两条针对
+DSH 0.1.x 的遗留行（`@deepseek-ai/dsh-code-runtime-worker-thread`、`@deepseek-ai/dsh-agent-presets`），
+在 0.2.2-rc.1 上不存在。`--dump-config` 组合正常（119 行、无告警），但
+`--dump-config-schema` 会报这两条 import 失败。若真实终端启动报缺包，需要把这两条行
+从 `vendor/dsh-tui/cordis.patch.yml` 中移除后再发版。
