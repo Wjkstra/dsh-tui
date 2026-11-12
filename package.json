@@ -1,6 +1,6 @@
 {
   "name": "dsh-cli",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Terminal front door for DeepSeek Harness: a profile bundle that composes the terminal UI and ships the dsh-cli launcher.",
   "keywords": [
     "dsh",
@@ -14,7 +14,7 @@
   ],
   "license": "MIT",
   "author": {
-    "name": "wjping19"
+    "name": "Wjkstra"
   },
   "repository": {
     "type": "git",
