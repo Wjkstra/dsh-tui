@@ -5,15 +5,15 @@
 #
 # A patch replaces the targeted row's whole `config`, so each row below
 # restates every key it owns (see the dsh-base patch for the shared
-# defaults). The dsh-base core rows that need no dsh-tui value — tools,
+# defaults). The dsh-base core rows that need no dsh-tui value 鈥?tools,
 # sandbox/approval policy, skills, goal, plan mode, workspace context,
-# telemetry — are inherited unchanged.
+# telemetry 鈥?are inherited unchanged.
 
-# ── surface-specific values over the dsh-base layer ─────────────────────────
+# 鈹€鈹€ surface-specific values over the dsh-base layer 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 # The dsh-tui deployment persona; DSH_TUI_PERSONA overrides the coding-agent
 # default (the base persona is empty). dsh-system-prompt renamed the slot at
-# 0.1.3-alpha.2 (`persona` → `personaPrefix`, with an optional suffix
+# 0.1.3-alpha.2 (`persona` 鈫?`personaPrefix`, with an optional suffix
 # counterpart); older cohorts only accept `persona`, so the key follows the
 # installed package version.
 - id: system-prompt
@@ -54,7 +54,7 @@
   config:
     agents: []
 
-# ── agent presets (issue #8) ────────────────────────────────────────────────
+# 鈹€鈹€ agent presets (issue #8) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 #
 # The model-facing plugin set moves INTO the preset registry: every
 # session composes its tools/prompt sections from one preset
@@ -64,8 +64,7 @@
 # `config/agent-presets/` directory supplied explicitly. Both append
 # `$DSH_HOME/.agent-presets`. Mirroring the official dsh-web-app patch: every
 # dsh-base row a preset now owns is disabled here, so a minimal agent does not
-# leak host-layer tools (an agent's registry view resolves agent → preset →
-# global). On 0.1.7, the adapter registers official declarative bundles;
+# leak host-layer tools (an agent's registry view resolves agent 鈫?preset 鈫?# global). On 0.1.7, the adapter registers official declarative bundles;
 # directory discovery and the old code-runtime host row stay disabled.
 
 - id: agent-instructions
@@ -76,7 +75,7 @@
 
 # compaction lives in the preset's own isolate realm (standard/ptc/cordis
 # carry `compaction-basic` with package defaults; minimal has none). The old
-# ratio/retain tunables retired with this host row — preset compositions own
+# ratio/retain tunables retired with this host row 鈥?preset compositions own
 # their compaction config.
 - id: compaction-basic
   disabled: true
@@ -172,7 +171,7 @@
 # Windows has no sandbox confinement backend yet (sandbox-local's win32
 # chain is empty); use danger-full-access on Windows so bash commands can
 # run. Other platforms keep the base workspace-write default. DSH_PERMISSION_MODE
-# is the INITIAL state of a launch — the remembered /permission pick
+# is the INITIAL state of a launch 鈥?the remembered /permission pick
 # (~/.dsh-tui/permission.json) outranks it whenever it is not set.
 - id: sandbox-policy
   config:
@@ -185,18 +184,18 @@
   config:
     policy: !!js "process.platform === 'win32' ? 'never' : ((process.env.DSH_PERMISSION_MODE ?? 'workspace-write') === 'danger-full-access' ? 'never' : 'ask')"
 
-# Sessions live in the shared JSONL store (~/.dsh/sessions) — the same
-# backend dsh web writes — so /resume here and the web session list see each
+# Sessions live in the shared JSONL store (~/.dsh/sessions) 鈥?the same
+# backend dsh web writes 鈥?so /resume here and the web session list see each
 # other (#24). The row itself comes from the dsh-base layer; this override
 # only re-points the root when DSH_TUI_SESSION_ROOT is set (test isolation).
 - id: session-persistence-jsonl
   config:
     root: !!js process.env.DSH_TUI_SESSION_ROOT ?? dshHomePath('sessions')
 
-# ── dsh-tui rows ────────────────────────────────────────────────────────────
+# 鈹€鈹€ dsh-tui rows 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 # The `user-interaction` service row comes from the dsh-base bundle layer
-# (mounted before this layer); do not insert it again — the include patch
+# (mounted before this layer); do not insert it again 鈥?the include patch
 # semantics would create a duplicate row. dsh-tui defensively creates the
 # service on its own context when no composition provides it (bare
 # `dsh --config cordis.yml` boots), then mounts the model-facing
@@ -239,17 +238,6 @@
       name: '@deepseek-ai/dsh-workspace'
       disabled: !!js "[...ctx.loader.entries()].some(entry => entry.options.id === 'workspace' && entry.options.name === '@deepseek-ai/dsh-workspace' && !entry.disabled)"
 
-    # PTC presentation waits on this Host service. The scoped row supports a
-    # TUI-only profile and yields to the official web-app row in mixed profiles.
-    - id: dsh-tui-code-runtime
-      name: '@deepseek-ai/dsh-code-runtime-worker-thread'
-      disabled: !!js >-
-        (() => {
-          const require = process.getBuiltinModule('node:module').createRequire(ctx.baseUrl)
-          try { require.resolve('@deepseek-ai/dsh-ptc-runtime-node/package.json'); return true } catch {}
-          return [...ctx.loader.entries()].some(entry => entry.options.id === 'code-runtime' && entry.options.name === '@deepseek-ai/dsh-code-runtime-worker-thread' && !entry.disabled)
-        })()
-
     # 0.1.2 presets opt their delegation tool into Host-owned model-selection
     # settings. Without this service standard/ptc/cordis preset mounting fails.
     # The package subpath does not exist on rc.2, so resolve that capability
@@ -289,7 +277,7 @@
       name: '@deepseek-harness-tui/dsh-tui/scenes'
 
     # Optional plugins register side-panel surfaces (sidebar Panel +
-    # compact row, experimental §18) here; admission, budgets and crash
+    # compact row, experimental 搂18) here; admission, budgets and crash
     # isolation remain owned by the tuiPanels runtime + PanelStore.
     - id: dsh-tui-panels
       name: '@deepseek-harness-tui/dsh-tui/panels'
@@ -307,46 +295,10 @@
     # dialogs (select/confirm/input), keyed status-line contributions,
     # keyboard shortcuts, and custom session-entry text renderers. The
     # decision events (tui/input, tui/rewind-prompt, tui/session-switch,
-    # tui/compact, …) are fired by the channel on the cordis bus directly
+    # tui/compact, 鈥? are fired by the channel on the cordis bus directly
     # and need no row.
     - id: dsh-tui-extensions
       name: '@deepseek-harness-tui/dsh-tui/extensions'
-
-    # The agent-preset roster (issue #8): `ctx.agentPresets`, the service the
-    # TUI composes every session's model-facing world from. 0.1.2 packages
-    # prepend their bundled presets as the read-only system root; legacy rc.2
-    # packages have no bundled root and still scan the dsh CLI directory. Both append
-    # `$DSH_HOME/.agent-presets` as the user root. Deployment-added roots may
-    # still be supplied by a later patch.
-    - id: dsh-tui-agent-presets
-      name: '@deepseek-ai/dsh-agent-presets'
-      disabled: !!js >-
-        (() => {
-          const require = process.getBuiltinModule('node:module').createRequire(ctx.baseUrl)
-          try { require.resolve('@deepseek-ai/dsh-agent-preset-registry/package.json'); return true } catch {}
-          return [...ctx.loader.entries()].some(entry => entry.options.id === 'agent-presets' && entry.options.name === '@deepseek-ai/dsh-agent-presets' && !entry.disabled)
-        })()
-      config: !!js >-
-        (() => {
-          const require = process.getBuiltinModule('node:module').createRequire(ctx.baseUrl)
-          const fs = process.getBuiltinModule('node:fs')
-          const path = process.getBuiltinModule('node:path')
-          try {
-            const manifest = require.resolve('@deepseek-ai/dsh-agent-presets/package.json')
-            if (fs.existsSync(path.join(path.dirname(manifest), 'presets'))) {
-              return { default: 'standard' }
-            }
-          } catch {
-            // Let the roster import report a missing package; preserve the rc
-            // root fallback below for every package generation without one.
-          }
-          const base = ctx.baseUrl
-          if (!base) return { default: 'standard' }
-          const root = new URL('../node_modules/@deepseek-ai/dsh/config/agent-presets/', base)
-          let rootPath = decodeURIComponent(root.pathname)
-          if (/^\/[A-Za-z]:/.test(rootPath)) rootPath = rootPath.slice(1)
-          return { default: 'standard', roots: [{ path: rootPath, trust: 'system' }] }
-        })()
 
     # 0.1.7 replaces directory discovery with declarations in a registry.
     # The TUI registers the official bundle defaults only when Web has not
@@ -364,7 +316,7 @@
 
     # Host-plane services the `cordis` preset's plugin-experimentation tool
     # waits on (dynamicCordisRunner/cordisInspect); dsh-base carries no such
-    # row — the official web app inserts it the same way, so this copy yields
+    # row 鈥?the official web app inserts it the same way, so this copy yields
     # to it when it is already present.
     - id: dsh-tui-cordis-host-runner
       name: '@deepseek-ai/dsh-cordis-host-runner'
@@ -392,8 +344,7 @@
     # (ChatGPT/Codex, Claude, Grok; newer pi-ai adds OpenAI direct and Meta)
     # plus the /auth command. Its facade also delegates DeepSeek sign-in to
     # the Host-owned account service when available. The TUI's /provider
-    # wizard gains its OAuth branch from ctx.dshAuth. Entry-level inject only —
-    # the internal module's own inject is empty so a stale patch cannot
+    # wizard gains its OAuth branch from ctx.dshAuth. Entry-level inject only 鈥?    # the internal module's own inject is empty so a stale patch cannot
     # deadlock a composition lacking these services (#183 pattern).
     - id: dsh-tui-auth
       name: '@deepseek-harness-tui/dsh-tui/oauth'
@@ -413,44 +364,33 @@
       # including `tuiThemes`)
       # live in the entry-level inject ONLY as an ordering (and reload-rebind)
       # guarantee alongside their service rows
-      # above — they are deliberately absent from the plugin's code-level
+      # above 鈥?they are deliberately absent from the plugin's code-level
       # inject (issue #183): the dsh CLI may read this patch from an older
       # copy of the package than the plugin module it loads, and a hard
       # code-level inject then deadlocks the tree at boot ("pending (waiting
       # for service: tuiWorkspaces)"). Without the rows the TUI degrades:
       # /workspace falls back to the local-only runtime, plugin scenes never
       # open. (The comment sits below the inject line:
-      # verify-workspace-attachment.mjs asserts the name→inject distance.)
+      # verify-workspace-attachment.mjs asserts the name鈫抜nject distance.)
       config:
         # `provider` + `model` are the deployment DEFAULT route (used until a
         # `/model` pick is persisted in ~/.dsh-tui/model.json, which then wins
         # whole); a half-pinned pair is ignored outright (issue #67).
         provider: deepseek-official
-        # Alt-screen fullscreen 布局：应用内鼠标选区（选择即复制, OSC 52 +
-        # wl-copy/xclip/xsel 兜底）、滚轮滚动、双击选词/三击选行。出厂默认开启，
-        # 与 schema 默认（index.ts fullscreen default true）保持一致——两处必须
-        # 同步翻转，否则本覆盖层会盖住 schema 默认，更新后用户仍落在 inline。
-        # 想退回 inline 主屏（终端原生滚动/选择）：/settings 全屏开关或 cordis.yml
-        # `fullscreen: false`——显式选择始终优先于默认。
-        fullscreen: true
-        # 以下为 /settings 可改的显示设置；每项说明与默认值见应用内 /settings 屏。
-        terminalImages: true
+        # Alt-screen fullscreen 甯冨眬锛氬簲鐢ㄥ唴榧犳爣閫夊尯锛堥€夋嫨鍗冲鍒? OSC 52 +
+        # wl-copy/xclip/xsel 鍏滃簳锛夈€佹粴杞粴鍔ㄣ€佸弻鍑婚€夎瘝/涓夊嚮閫夎銆傚嚭鍘傞粯璁ゅ紑鍚紝
+        # 涓?schema 榛樿锛坕ndex.ts fullscreen default true锛変繚鎸佷竴鑷粹€斺€斾袱澶勫繀椤?        # 鍚屾缈昏浆锛屽惁鍒欐湰瑕嗙洊灞備細鐩栦綇 schema 榛樿锛屾洿鏂板悗鐢ㄦ埛浠嶈惤鍦?inline銆?        # 鎯抽€€鍥?inline 涓诲睆锛堢粓绔師鐢熸粴鍔?閫夋嫨锛夛細/settings 鍏ㄥ睆寮€鍏虫垨 cordis.yml
+        # `fullscreen: false`鈥斺€旀樉寮忛€夋嫨濮嬬粓浼樺厛浜庨粯璁ゃ€?        fullscreen: true
+        # 浠ヤ笅涓?/settings 鍙敼鐨勬樉绀鸿缃紱姣忛」璇存槑涓庨粯璁ゅ€艰搴旂敤鍐?/settings 灞忋€?        terminalImages: true
         # diffLayout: auto
         # mermaidDiagrams: true
-        # 任务完成通知：off / unfocused（默认）/ always；方式：auto（默认）/ osc9 / bel / windows。
-        # taskNotifications: unfocused
+        # 浠诲姟瀹屾垚閫氱煡锛歰ff / unfocused锛堥粯璁わ級/ always锛涙柟寮忥細auto锛堥粯璁わ級/ osc9 / bel / windows銆?        # taskNotifications: unfocused
         # notificationMethod: auto
-        # windows 档：Windows 主机原生 toast（首次注册当前用户的 HKCU 标识，约延迟 3 秒）。
-        # auto 在 Windows 本地会话用此档，SSH 改走客户端终端；仅 DSH 会话且 cc-dsh-notifier 已启用、正在运行时让位。
-        # 回复中 LaTeX 公式的显示方式：auto（默认，目前为 Unicode）/ image（支持图形的终端里块级公式显示为图片）/ unicode / source（保留源码）。/settings 可实时改。
-        # mathRendering: auto
-        # 每个请求实际生效的推理强度，按当前路由的 adapter 档位校验
-        #（deepseek: off/low/high/max）；非法值回落 adapter 默认。
-        # 这是部署默认值：上一次 /effort 的持久化选择（~/.dsh-tui/effort.json）
-        # 优先于它，它只决定"还没有选择过"的会话。
-        effort: max
+        # windows 妗ｏ細Windows 涓绘満鍘熺敓 toast锛堥娆℃敞鍐屽綋鍓嶇敤鎴风殑 HKCU 鏍囪瘑锛岀害寤惰繜 3 绉掞級銆?        # auto 鍦?Windows 鏈湴浼氳瘽鐢ㄦ妗ｏ紝SSH 鏀硅蛋瀹㈡埛绔粓绔紱浠?DSH 浼氳瘽涓?cc-dsh-notifier 宸插惎鐢ㄣ€佹鍦ㄨ繍琛屾椂璁╀綅銆?        # 鍥炲涓?LaTeX 鍏紡鐨勬樉绀烘柟寮忥細auto锛堥粯璁わ紝鐩墠涓?Unicode锛? image锛堟敮鎸佸浘褰㈢殑缁堢閲屽潡绾у叕寮忔樉绀轰负鍥剧墖锛? unicode / source锛堜繚鐣欐簮鐮侊級銆?settings 鍙疄鏃舵敼銆?        # mathRendering: auto
+        # 姣忎釜璇锋眰瀹為檯鐢熸晥鐨勬帹鐞嗗己搴︼紝鎸夊綋鍓嶈矾鐢辩殑 adapter 妗ｄ綅鏍￠獙
+        #锛坉eepseek: off/low/high/max锛夛紱闈炴硶鍊煎洖钀?adapter 榛樿銆?        # 杩欐槸閮ㄧ讲榛樿鍊硷細涓婁竴娆?/effort 鐨勬寔涔呭寲閫夋嫨锛垀/.dsh-tui/effort.json锛?        # 浼樺厛浜庡畠锛屽畠鍙喅瀹?杩樻病鏈夐€夋嫨杩?鐨勪細璇濄€?        effort: max
         # Shift+Tab session-mode cycle (array order IS the cycle order;
-        # absent → the built-in default/plan/full trio below). Each entry
+        # absent 鈫?the built-in default/plan/full trio below). Each entry
         # may declare any subset of the plan (on/off), sandbox (read-only/
         # workspace-write/danger-full-access), and approval (ask/never)
         # atoms; undeclared atoms are untouched. Entry index 0 is the
@@ -475,7 +415,7 @@
         preset: !!js process.env.DSH_TUI_PRESET ?? undefined
         workspace: !!js process.env.DSH_TUI_WORKSPACE_TARGET ?? undefined
         sessionId: !!js process.env.DSH_TUI_RESUME_SESSION ?? undefined
-        # Agent backend (`dsh-tui --backend claude` → DSH_TUI_BACKEND); unset → /kernel's remembered pick, else dsh.
+        # Agent backend (`dsh-tui --backend claude` 鈫?DSH_TUI_BACKEND); unset 鈫?/kernel's remembered pick, else dsh.
         backend: !!js process.env.DSH_TUI_BACKEND || undefined
 
     # Live working-line data source (thinking copy / running tool / turn

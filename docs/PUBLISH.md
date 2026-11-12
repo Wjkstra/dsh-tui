@@ -40,8 +40,10 @@ cd C:\Users\wjping19\dsh-cli-pkg && git add docs/index.json && git commit -m "ch
 
 ## 已知风险
 
-终端界面层来自 `@deepseek-harness-tui/dsh-tui@0.19.0` 的 patch。该 patch 里有两条针对
-DSH 0.1.x 的遗留行（`@deepseek-ai/dsh-code-runtime-worker-thread`、`@deepseek-ai/dsh-agent-presets`），
-在 0.2.2-rc.1 上不存在。`--dump-config` 组合正常（119 行、无告警），但
-`--dump-config-schema` 会报这两条 import 失败。若真实终端启动报缺包，需要把这两条行
-从 `vendor/dsh-tui/cordis.patch.yml` 中移除后再发版。
+终端界面层来自 `@deepseek-harness-tui/dsh-tui@0.19.0` 的 patch。它带有两条 DSH 0.1.x 的兜底行
+（`@deepseek-ai/dsh-code-runtime-worker-thread`、`@deepseek-ai/dsh-agent-presets`）。这两条在
+0.2.2 上只能靠 `require.resolve` 探测来禁用，而 bundle 目录解析不到宿主包，会误启用并导致
+`Cannot find package`。0.1.3 起已从 `vendor/dsh-tui/cordis.patch.yml` 中移除这两条（0.2.2 已无对应概念）。
+
+验证：`dsh --profile <p> --dump-config` 组合通过；`--dump-config-schema` 不再报缺包，
+但退出码仍为 1 —— 因为 TUI 的若干 `config` 使用 transform 回调，schema dump 无法投影（仅 warning）。
