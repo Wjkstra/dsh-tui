@@ -18,9 +18,9 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://gitee.com/wjping19/dsh-cli.git"
+    "url": "https://github.com/Wjkstra/dsh-tui.git"
   },
-  "homepage": "https://gitee.com/wjping19/dsh-cli#readme",
+  "homepage": "https://github.com/Wjkstra/dsh-tui#readme",
   "type": "module",
   "bin": {
     "dsh-cli": "./bin/dsh-cli.mjs"
