@@ -28,6 +28,8 @@
   "files": [
     "bin",
     "cordis.patch.yml",
+    "vendor/dsh-tui/cordis.patch.yml",
+    "vendor/dsh-tui/LICENSE",
     "icon.svg",
     "locale",
     "README.md",
@@ -40,7 +42,7 @@
     "bundle": {
       "patch": [
         "./cordis.patch.yml",
-        "./node_modules/@deepseek-harness-tui/dsh-tui/cordis.patch.yml"
+        "./vendor/dsh-tui/cordis.patch.yml"
       ]
     }
   },
