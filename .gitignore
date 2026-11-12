@@ -1,2 +1,4 @@
 ﻿node_modules/
 *.tgz
+.plugin-market-cache/
+docs/.plugin-market-cache/
