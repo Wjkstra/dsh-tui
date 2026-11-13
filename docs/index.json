@@ -33,6 +33,15 @@
       },
       "versions": [
         {
+          "version": "1.1.0",
+          "publishTimestamp": 1794539379,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/Wjkstra/dsh-tui",
+            "commit": "6b1ddb40afa6971378538712017bb30d7a26d60d"
+          }
+        },
+        {
           "version": "1.0.0",
           "publishTimestamp": 1794474928,
           "source": {
