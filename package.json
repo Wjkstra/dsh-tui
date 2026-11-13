@@ -1,7 +1,7 @@
 {
   "name": "dsh-cli",
-  "version": "1.0.0",
-  "description": "Claude-style terminal client for DeepSeek Harness: line-oriented transcript, pixel-whale splash, Shift+Tab permission modes, shared ~/.dsh sessions.",
+  "version": "1.1.0",
+  "description": "Claude-style terminal client for DeepSeek Harness with a fixed footer, session-level permission switching and shared ~/.dsh sessions.",
   "keywords": [
     "dsh",
     "dsh-plugin",

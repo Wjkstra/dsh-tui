@@ -2,8 +2,8 @@
 
 **DeepSeek Harness 的终端客户端（Claude 风格）。**
 
-v1.0 起是一个独立的行式 CLI：只追加输出、不做整屏 diff，因此在中文字体/旧控制台下也不会出现整屏错位。
-启动时保留蓝色像素鲸鱼 + `DEEPSEEK HARNESS` 大字开屏。
+交互终端使用简洁的启动区和固定底栏。底栏显示当前模型、推理强度、权限模式和沙箱范围。
+提交后立即开始计时，收到模型流式片段时切换到思考、回答或工具调用状态。完整答复保存在终端滚动记录中。
 
 ## 使用
 
@@ -23,10 +23,13 @@ dsh-cli --splash        # 只预览开屏
 | `Shift+Tab` | 权限模式循环：默认（逐次询问）→ 自动（工作区内）→ 计划（只读）→ 完全访问 |
 | `Ctrl+O` | 展开最近一次工具输出的完整内容 |
 | `Ctrl+C` / `Ctrl+D` | 中断 / 退出 |
-| `/mode [n]` `/plan` `/new` `/list` `/resume <n|id>` `/status` `/compact` `/exit` | 交互命令 |
+| `/mode [n]` `/plan` `/new` `/list` `/resume <n|id>` `/status` `/compact` `/exit` | 交互命令，`/status` 显示完整工作区与运行状态 |
 
-权限模式映射到 DSH 的 `DSH_PERMISSION_MODE`（`workspace-write` / `read-only` / `danger-full-access`），
-切换需要重启运行时并自动 `resumeSession` 同一会话。会话写入 `~/.dsh`，与桌面端共用。
+权限切换通过 DSH 会话命令即时生效。自动模式允许工作区内的操作并拒绝提权请求。
+会话写入 `~/.dsh`，与桌面端共用。
+
+`DSH_CLI_PROVIDER`、`DSH_CLI_MODEL` 和 `DSH_CLI_EFFORT` 可配置模型路由和推理强度。
+设置 `DSH_CLI_SHOW_REASONING=1` 可查看模型提供的思考文本。
 
 ## 目录与信任
 
@@ -34,7 +37,7 @@ dsh-cli --splash        # 只预览开屏
 
 ## 开屏
 
-开屏素材来自 dsh-tui 的像素鲸鱼帧与大字字形表（MIT，作者 @lhh010），已抽取为 `bin/splash-data.json`，
+`--splash` 使用 dsh-tui 的像素鲸鱼帧与大字字形表（MIT，作者 @lhh010），已抽取为 `bin/splash-data.json`，
 运行时按真彩半块渲染；窗口不足时依次降级为「鲸鱼+信息」「鲸鱼+单行标题」。
 
 ## 插件市场

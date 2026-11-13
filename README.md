@@ -2,9 +2,9 @@
 
 **A Claude-style terminal client for DeepSeek Harness.**
 
-Since v1.0 this is a standalone line-oriented CLI: output is append-only (no full-screen diffing), so it
-cannot desynchronise on CJK fonts or legacy consoles. The startup splash keeps the blue pixel whale and
-the `DEEPSEEK HARNESS` wordmark.
+The interactive terminal has a compact header and a fixed input area that shows the model, reasoning
+effort, permission mode, and sandbox. A timer starts on submission and tracks live reasoning, reply,
+and tool activity. The complete answer goes into the terminal scrollback.
 
 ## Usage
 
@@ -24,9 +24,11 @@ dsh-cli --splash        # preview the splash only
 | `Ctrl+C` / `Ctrl+D` | interrupt / exit |
 | `/mode [n]` `/plan` `/new` `/list` `/resume <n|id>` `/status` `/compact` `/exit` | in-session commands |
 
-Permission modes map onto DSH's launch-time `DSH_PERMISSION_MODE` (`workspace-write`, `read-only`,
-`danger-full-access`); switching relaunches the runtime and resumes the same session. Sessions live in
-`~/.dsh` and are shared with the desktop app.
+Permission changes take effect in the current DSH session. Auto mode allows work within the workspace
+and rejects escalation requests. Sessions live in `~/.dsh` and are shared with the desktop app.
+
+Set `DSH_CLI_PROVIDER`, `DSH_CLI_MODEL`, or `DSH_CLI_EFFORT` to select a model route and reasoning effort.
+Set `DSH_CLI_SHOW_REASONING=1` to display reasoning text supplied by the model.
 
 ## Workspace trust
 
@@ -35,7 +37,7 @@ answer in `~/.dsh-cli/trusted.json`.
 
 ## Splash
 
-Artwork comes from dsh-tui's whale frames and block wordmark (MIT, by @lhh010), extracted into
+`--splash` uses dsh-tui's whale frames and block wordmark (MIT, by @lhh010), extracted into
 `bin/splash-data.json` and rendered as true-colour half blocks. Narrow or short terminals degrade to
 "whale + info" and then "whale + plain title".
 

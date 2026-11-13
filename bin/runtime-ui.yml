@@ -1,0 +1,21 @@
+- insert:
+    - id: dsh-cli-ui
+      name: ./runtime-ui.mjs
+
+# SDK command routing admits the built-in /permission command. The preset map
+# replaces the base map, so keep the three standard presets alongside CLI auto.
+- id: permission
+  config:
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never
+      cli-workspace-only:
+        sandbox: workspace-write
+        approval: never

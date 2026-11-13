@@ -2,29 +2,27 @@
 /**
  * dsh-cli — a Claude-Code-style terminal client for DeepSeek Harness.
  *
- * Design notes (why this looks the way it does):
- *  - Append-only rendering. Nothing is repainted in place except one single
- *    input line, so a terminal that renders a character at a different width
- *    than we measure can never desynchronise a whole frame.
- *  - Permission modes map onto DSH's launch-time `DSH_PERMISSION_MODE`
- *    (workspace-write / read-only / danger-full-access); switching a mode that
- *    changes the sandbox relaunches the runtime and resumes the same session.
- *  - The workspace is the directory the client is started in, and it must be
- *    trusted first (like Claude Code's folder trust prompt).
+ * Durable messages stay in terminal scrollback. The input, status and live
+ * response preview occupy a small footer on interactive terminals.
  */
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
+import { fileURLToPath } from 'node:url'
+import { clean, oneLine, previousCharacter, nextCharacter, TerminalFooter } from './terminal.mjs'
 
-const VERSION = '1.0.0'
+const VERSION = '1.1.0'
 const HOME = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
 const CLIENT_HOME = path.join(os.homedir(), '.dsh-cli')
 const TRUST_FILE = path.join(CLIENT_HOME, 'trusted.json')
-const RUNTIME = process.env.DSH_CLI_RUNTIME || path.join(CLIENT_HOME, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+const RUNTIME = process.env.DSH_CLI_RUNTIME || undefined
 const PROVIDER = process.env.DSH_CLI_PROVIDER || 'deepseek-account'
 const MODEL = process.env.DSH_CLI_MODEL || 'deepseek-flash'
+const EFFORT = process.env.DSH_CLI_EFFORT?.trim() || undefined
 const INIT_TIMEOUT = Number(process.env.DSH_CLI_INIT_TIMEOUT_MS || 180000)
+const SHOW_REASONING = process.env.DSH_CLI_SHOW_REASONING === '1'
+const INTERACTIVE_TERMINAL = Boolean(process.stdin.isTTY && process.stdout.isTTY && process.env.TERM !== 'dumb')
 
 const ansi = (process.stdout.isTTY || process.env.DSH_CLI_FORCE_ANSI === '1') && !process.env.NO_COLOR
 const paint = (code, text) => (ansi ? `\u001b[${code}m${text}\u001b[0m` : text)
@@ -35,21 +33,18 @@ const green = (t) => paint('32', t)
 const yellow = (t) => paint('33', t)
 const cyan = (t) => paint('36', t)
 
-/** Permission modes, in Shift+Tab order. `env` is the DSH_PERMISSION_MODE. */
+/** Permission presets, in Shift+Tab order. */
 const MODES = [
-  { id: 'default', label: '默认（逐次询问）', env: 'workspace-write', ask: true },
-  { id: 'auto', label: '自动（工作区内）', env: 'workspace-write', ask: false },
-  { id: 'plan', label: '计划（只读）', env: 'read-only', ask: false, plan: true },
-  { id: 'full', label: '完全访问', env: 'danger-full-access', ask: false },
+  { id: 'default', label: '默认 · 按需审批', preset: 'workspace-write', sandbox: 'workspace-write', approval: 'ask' },
+  { id: 'auto', label: '自动 · 仅工作区', preset: 'cli-workspace-only', sandbox: 'workspace-write', approval: 'never' },
+  { id: 'plan', label: '计划 · 只读', preset: 'read-only', sandbox: 'read-only', approval: 'ask', plan: true },
+  { id: 'full', label: '完全访问', preset: 'danger-full-access', sandbox: 'danger-full-access', approval: 'never' },
 ]
 
-let promptVisible = false
+let footer
 const out = (t = '') => {
-  if (promptVisible && process.stdout.isTTY) {
-    process.stdout.write('\r\u001b[K')
-    promptVisible = false
-  }
-  process.stdout.write(`${t}\n`)
+  if (footer) footer.print(t)
+  else process.stdout.write(`${t}\n`)
 }
 
 // ---------------------------------------------------------------------------
@@ -57,7 +52,7 @@ const out = (t = '') => {
 // ---------------------------------------------------------------------------
 const SPLASH = (() => {
   try {
-    return JSON.parse(fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), 'splash-data.json'), 'utf8'))
+    return JSON.parse(fs.readFileSync(new URL('./splash-data.json', import.meta.url), 'utf8'))
   } catch {
     return null
   }
@@ -118,7 +113,7 @@ function renderSplash(mode) {
   const whaleWidth = Math.max(...whale.map((line) => stripAnsi(line).length))
   const titleWidth = Math.max(...SPLASH.deepseek.map((r) => r.replace(/[\u00b7\u2027]/g, ' ').length))
   const info = [
-    dim(`${MODEL}  ·  ${process.env.DSH_CLI_EFFORT ?? 'high'} effort`),
+    dim(`${MODEL}  ·  推理 ${EFFORT ?? '自动'}`),
     dim(process.cwd()),
     dim('Tip: shift+tab 切换权限模式  ·  /help 查看命令'),
   ]
@@ -160,7 +155,6 @@ function renderSplash(mode) {
     for (const line of info) out(line)
   }
   out('')
-  out('探索未至之境！')
   out(dim(`模式 ${mode.label}`))
   out('')
 }
@@ -244,37 +238,6 @@ function resultText(message) {
   return blocks.filter((b) => b?.type === 'text').map((b) => b.text).join('\n')
 }
 
-class Printer {
-  constructor() {
-    this.chain = Promise.resolve()
-    this.tools = []
-  }
-
-  enqueue(task) {
-    this.chain = this.chain.then(task).catch(() => {})
-    return this.chain
-  }
-
-  idle() {
-    return this.chain
-  }
-
-  expandLast() {
-    const entry = this.tools[this.tools.length - 1]
-    if (!entry) {
-      out(dim('  no tool output to expand'))
-      return
-    }
-    out('')
-    out(dim(`  ---- ${entry.name} (${entry.ok ? 'ok' : 'fail'}) ----`))
-    for (const line of entry.lines) out(dim('  | ') + line)
-    out(dim('  ---- end ----'))
-    out('')
-  }
-}
-
-const printer = new Printer()
-
 /** Minimal markdown: fenced code, headings, inline code and bold. */
 function renderMarkdown(text) {
   const result = []
@@ -302,93 +265,92 @@ function renderMarkdown(text) {
   return result.join('\n')
 }
 
-/** Progressive output: tokens are written in small ticks so it reads like streaming. */
-async function typeWrite(text) {
-  if (!ansi || process.env.DSH_CLI_NO_TYPING === '1') {
-    process.stdout.write(text)
-    return
-  }
-  const tokens = text.match(/\u001b\[[0-9;]*m|[\s\S]/gu) ?? []
-  const perTick = Math.max(2, Math.round(tokens.length / 220))
-  for (let i = 0; i < tokens.length; i += perTick) {
-    process.stdout.write(tokens.slice(i, i + perTick).join(''))
-    if (i + perTick < tokens.length) await new Promise((resolve) => setTimeout(resolve, 12))
-  }
+const elapsed = (started) => `${((performance.now() - started) / 1000).toFixed(1)}s`
+const liveLabels = {
+  startup: '正在启动运行时', waiting: '等待模型响应', thinking: '正在思考',
+  answer: '正在回答', preparingTool: '正在准备工具调用', tools: '正在运行工具',
+  retry: '正在重试', finishing: '正在收尾',
 }
 
-function makeRenderer(sessionId, ui) {
-  const calls = new Map()
+class TurnDisplay {
+  constructor() {
+    this.started = performance.now()
+    this.phase = 'waiting'
+    this.preview = ''
+    this.thinkingSince = null
+    this.calls = new Map()
+    this.printedText = ''
+    this.error = ''
+  }
 
-  return function render(notification) {
-    if (notification.method !== 'session.event') return
-    const payload = notification.params ?? {}
-    if (payload.sessionId !== sessionId) return
-    const event = payload.event
-    if (!event?.type) return
+  setPhase(phase) {
+    if (this.phase === phase) return
+    this.phase = phase
+    this.preview = ''
+  }
 
+  stream({ phase, text }) {
+    if (phase === 'thinking' && this.thinkingSince === null) this.thinkingSince = performance.now()
+    if (phase === 'answer' || phase === 'preparingTool' || phase === 'waiting') this.endThinking()
+    this.setPhase(phase)
+    if (text) this.preview = (this.preview + clean(text)).slice(-240)
+  }
+
+  endThinking(reasoning) {
+    if (this.thinkingSince === null && !reasoning) return
+    const duration = this.thinkingSince === null ? '' : ` ${elapsed(this.thinkingSince)}`
+    this.thinkingSince = null
+    out(dim(`· 已思考${duration}`))
+  }
+
+  event(event, saveTool) {
+    const data = event.data ?? {}
     switch (event.type) {
+      case 'step/start':
+        this.setPhase('waiting')
+        break
+      case 'llm/retry':
+      case 'llm/retry-started':
+        this.endThinking()
+        this.setPhase('retry')
+        break
       case 'assistant/message': {
-        const content = Array.isArray(event.data?.message?.content) ? event.data.message.content : []
-        const text = content.filter((b) => b?.type === 'text').map((b) => b.text).join('')
-        const reasoning = content.filter((b) => b?.type === 'reasoning').map((b) => b.text).join('')
-        if (reasoning && process.env.DSH_CLI_SHOW_REASONING === '1') {
-          printer.enqueue(async () => {
-            ui.clearInput()
-            out(dim(reasoning.trim().slice(0, 600)))
-            ui.renderInput()
-          })
-        }
+        const content = data.message?.content ?? []
+        const text = clean(content.filter((b) => b.type === 'text').map((b) => b.text).join('')).trimEnd()
+        const reasoning = content.filter((b) => b.type === 'reasoning').map((b) => b.text).join('')
+        if (this.phase !== 'answer' && this.phase !== 'preparingTool') this.endThinking(reasoning)
+        this.setPhase('finishing')
+        if (SHOW_REASONING && reasoning.trim()) out(dim(clean(reasoning.trim())))
         if (text.trim()) {
-          printer.enqueue(async () => {
-            ui.clearInput()
-            out('')
-            await typeWrite(renderMarkdown(text.trimEnd()))
-            out('')
-            ui.renderInput()
-          })
+          this.printedText = text
+          out(`● ${renderMarkdown(text)}\n`)
         }
         break
       }
       case 'tool/call': {
-        const data = event.data ?? {}
-        calls.set(data.callId, data.name)
-        printer.enqueue(async () => {
-          ui.clearInput()
-          out('')
-          out(dim('> ') + `${data.name}(${toolArgSummary(data.arguments)})`)
-          ui.renderInput()
-        })
+        const name = oneLine(data.name ?? 'tool')
+        this.calls.set(data.callId, name)
+        this.setPhase('tools')
+        out(dim('> ') + `${name}(${oneLine(toolArgSummary(data.arguments))})`)
         break
       }
       case 'tool/result': {
-        const data = event.data ?? {}
-        const name = calls.get(data.message?.toolCallId) ?? ''
-        calls.delete(data.message?.toolCallId)
-        const full = resultText(data.message)
-        const lines = full.split('\n').filter((line) => line.length > 0)
+        const callId = data.message?.toolCallId
+        const name = this.calls.get(callId) ?? ''
+        this.calls.delete(callId)
+        const lines = clean(resultText(data.message)).split('\n').filter(Boolean)
         const ok = data.message?.isError !== true
-        printer.tools.push({ name, ok, lines })
-        printer.enqueue(async () => {
-          ui.clearInput()
-          const head = lines[0] ? lines[0].replace(/\s+/g, ' ').slice(0, 110) : ''
-          const rest = lines.length > 1 ? ` (+${lines.length - 1} lines, ctrl+o)` : ''
-          out(dim(ok ? '  [ok]   ' : '  [fail] ') + `${name} ${head}${rest}`)
-          ui.renderInput()
-        })
+        saveTool({ name, ok, lines })
+        const head = oneLine(lines[0] ?? '').slice(0, 110)
+        const rest = lines.length > 1 ? ` (+${lines.length - 1} lines, Ctrl+O)` : ''
+        out(dim(ok ? '  [ok]   ' : '  [fail] ') + `${name} ${head}${rest}`)
+        if (this.calls.size === 0) this.setPhase('finishing')
         break
       }
-      case 'turn/end': {
-        const kind = event.data?.reason?.kind
-        if (kind && kind !== 'completed' && kind !== 'stop') {
-          printer.enqueue(async () => {
-            ui.clearInput()
-            out(dim(`  [${kind}]`))
-            ui.renderInput()
-          })
-        }
-        break
-      }
-      default:
+      case 'turn/end':
+        this.endThinking()
+        this.setPhase('finishing')
+        this.error = data.reason?.error?.message ?? ''
         break
     }
   }
@@ -398,7 +360,7 @@ function makeRenderer(sessionId, ui) {
 // one input line: raw mode with a tiny editor, line mode when not a TTY
 // ---------------------------------------------------------------------------
 class LineInput {
-  constructor({ onMode, onSubmit, onKey }) {
+  constructor({ onMode, onSubmit, onKey, onChange, onEnd }) {
     this.buffer = ''
     this.cursor = 0
     this.busy = false
@@ -407,109 +369,128 @@ class LineInput {
     this.onMode = onMode
     this.onSubmit = onSubmit
     this.onKey = onKey
+    this.onChange = onChange
+    this.onEnd = onEnd
     this.resolveLine = null
-    this.raw = Boolean(process.stdin.isTTY)
+    this.question = ''
+    this.escape = ''
+    this.paste = null
+    this.raw = INTERACTIVE_TERMINAL
   }
 
   start() {
     if (this.raw) {
       process.stdin.setRawMode(true)
-      process.stdin.resume()
-      process.stdin.setEncoding('utf8')
-      process.stdin.on('data', (chunk) => this.handleKeys(chunk))
+      this.onData = (chunk) => this.handleKeys(chunk)
     } else {
-      process.stdin.setEncoding('utf8')
       let partial = ''
       let chain = Promise.resolve()
-      process.stdin.on('data', (chunk) => {
+      this.onData = (chunk) => {
         partial += chunk
         let index
         while ((index = partial.indexOf('\n')) >= 0) {
           const line = partial.slice(0, index).replace(/\r$/, '')
           partial = partial.slice(index + 1)
-          chain = chain.then(() => this.onSubmit(line)).catch(() => {})
+          chain = chain.then(() => this.onSubmit(line))
         }
-      })
+      }
+      this.onEof = () => {
+        if (partial.trim()) chain = chain.then(() => this.onSubmit(partial.trim()))
+        void chain.then(this.onEnd)
+      }
+      process.stdin.once('end', this.onEof)
     }
+    process.stdin.setEncoding('utf8')
+    process.stdin.on('data', this.onData)
+    process.stdin.resume()
   }
 
   stop() {
-    if (this.raw) {
-      try { process.stdin.setRawMode(false) } catch { /* ignore */ }
-      process.stdin.pause()
-    }
-  }
-
-  setBusy(busy) { this.busy = busy }
-
-  renderInput() {
-    if (!this.raw) return
-    const promptText = cyan('> ')
-    process.stdout.write(`\r\u001b[K${promptText}${this.buffer}`)
-    promptVisible = true
-    const back = this.buffer.length - this.cursor
-    if (back > 0) process.stdout.write(`\u001b[${back}D`)
-  }
-
-  clearInput() {
-    promptVisible = false
-    if (!this.raw) return
-    process.stdout.write('\r\u001b[K')
+    if (this.onData) process.stdin.off('data', this.onData)
+    if (this.onEof) process.stdin.off('end', this.onEof)
+    if (this.raw && process.stdin.isRaw) process.stdin.setRawMode(false)
+    process.stdin.pause()
+    this.answer('')
   }
 
   handleKeys(chunk) {
-    if (this.busy && !this.expectInput) {
-      if (chunk.includes('\u0003')) this.onKey('interrupt')
-      if (chunk.includes('\u000f')) this.onKey('expand')
-      return
-    }
+    chunk = this.escape + chunk
+    this.escape = ''
     let i = 0
     while (i < chunk.length) {
-      const ch = chunk[i]
-      if (ch === '\u001b' && chunk[i + 1] === '[') {
-        const rest = chunk.slice(i)
-        if (rest.startsWith('\u001b[Z')) { this.onMode(); i += 3; continue }
-        if (rest.startsWith('\u001b[A')) { this.historyPrev(); i += 3; continue }
-        if (rest.startsWith('\u001b[B')) { this.historyNext(); i += 3; continue }
-        if (rest.startsWith('\u001b[C')) { this.cursor = Math.min(this.buffer.length, this.cursor + 1); i += 3; continue }
-        if (rest.startsWith('\u001b[D')) { this.cursor = Math.max(0, this.cursor - 1); i += 3; continue }
-        if (rest.startsWith('\u001b[H')) { this.cursor = 0; i += 3; continue }
-        if (rest.startsWith('\u001b[F')) { this.cursor = this.buffer.length; i += 3; continue }
-        // Bracketed paste: drop the markers, keep the text.
-        if (rest.startsWith('\u001b[200~')) {
-          const end = rest.indexOf('\u001b[201~')
-          const body = end >= 0 ? rest.slice(6, end) : rest.slice(6)
-          this.insert(body.replace(/\r/g, ''))
-          i += end >= 0 ? end + 6 : rest.length
-          continue
+      if (this.paste !== null) {
+        const end = chunk.indexOf('\u001b[201~', i)
+        if (end === -1) {
+          // Retain only a possible partial closing marker for the next chunk.
+          const lastEscape = chunk.lastIndexOf('\u001b')
+          if (lastEscape >= i && '\u001b[201~'.startsWith(chunk.slice(lastEscape))) {
+            this.escape = chunk.slice(lastEscape)
+            this.paste += chunk.slice(i, lastEscape)
+          } else this.paste += chunk.slice(i)
+          return
         }
-        i += 1
+        if (!this.busy || this.resolveLine) this.insert(clean(this.paste + chunk.slice(i, end)))
+        this.paste = null
+        i = end + 6
         continue
       }
+      const ch = chunk[i]
+      if (ch === '\u001b') {
+        const rest = chunk.slice(i)
+        const key = /^\u001b(?:\[[0-?]*[ -/]*[@-~]|O[A-Za-z])/.exec(rest)?.[0]
+        if (!key && /^\u001b(?:\[[0-?]*[ -/]*|O)?$/.test(rest)) {
+          this.escape = rest
+          break
+        }
+        i += key?.length ?? 1
+        if (key === '\u001b[200~') { this.paste = ''; continue }
+        if (this.busy && !this.resolveLine) continue
+        switch (key) {
+          case '\u001b[Z': if (!this.resolveLine) this.onMode(); break
+          case '\u001b[A': if (!this.resolveLine) this.historyPrev(); break
+          case '\u001b[B': if (!this.resolveLine) this.historyNext(); break
+          case '\u001b[C': this.cursor = nextCharacter(this.buffer, this.cursor); break
+          case '\u001b[D': this.cursor = previousCharacter(this.buffer, this.cursor); break
+          case '\u001b[H': case '\u001bOH': this.cursor = 0; break
+          case '\u001b[F': case '\u001bOF': this.cursor = this.buffer.length; break
+          case '\u001b[3~': this.buffer = this.buffer.slice(0, this.cursor) + this.buffer.slice(nextCharacter(this.buffer, this.cursor)); break
+        }
+        continue
+      }
+      if (ch === '\u0003') { this.onKey('ctrl-c'); return }
+      if (ch === '\u000f') { this.onKey('expand'); i += 1; continue }
+      if (this.busy && !this.resolveLine) { i += 1; continue }
       if (ch === '\r' || ch === '\n') {
         this.submit()
-        i += 1
+        i += chunk.startsWith('\r\n', i) ? 2 : 1
         continue
       }
       if (ch === '\u007f' || ch === '\b') {
         if (this.cursor > 0) {
-          this.buffer = this.buffer.slice(0, this.cursor - 1) + this.buffer.slice(this.cursor)
-          this.cursor -= 1
+          const previous = previousCharacter(this.buffer, this.cursor)
+          this.buffer = this.buffer.slice(0, previous) + this.buffer.slice(this.cursor)
+          this.cursor = previous
         }
         i += 1
         continue
       }
       if (ch === '\u0001') { this.cursor = 0; i += 1; continue }
       if (ch === '\u0005') { this.cursor = this.buffer.length; i += 1; continue }
-      if (ch === '\u0003') { this.onKey('ctrl-c'); i += 1; continue }
-      if (ch === '\u0004') { this.onKey('ctrl-d'); i += 1; continue }
-      if (ch === '\u000f') { this.onKey('expand'); i += 1; continue }
+      if (ch === '\u0004') {
+        if (this.resolveLine) {
+          this.answer('')
+          i += 1
+          continue
+        }
+        this.onKey('ctrl-d')
+        return
+      }
       if (ch === '\u0015') { this.buffer = this.buffer.slice(this.cursor); this.cursor = 0; i += 1; continue }
       if (ch < ' ') { i += 1; continue }
       this.insert(ch)
       i += 1
     }
-    this.renderInput()
+    this.onChange()
   }
 
   insert(text) {
@@ -521,13 +502,11 @@ class LineInput {
     const line = this.buffer.trim()
     this.buffer = ''
     this.cursor = 0
-    process.stdout.write('\r\u001b[K')
-    if (line) {
+    if (this.resolveLine) this.answer(line)
+    else if (line) {
       this.history.push(line)
       this.historyIndex = this.history.length
       this.onSubmit(line)
-    } else {
-      this.renderInput()
     }
   }
 
@@ -546,14 +525,30 @@ class LineInput {
   }
 
   /** Read one line, used by approvals and questions while a turn runs. */
-  readLine(questionText) {
-    this.expectInput = true
-    process.stdout.write(questionText)
+  readLine(questionText, signal) {
     if (!this.raw) return Promise.resolve('')
     return new Promise((resolve) => {
-      const previous = this.onSubmit
-      this.onSubmit = (line) => { this.onSubmit = previous; this.expectInput = false; resolve(line) }
+      this.question = questionText
+      const abort = () => this.answer('')
+      this.resolveLine = (line) => {
+        signal?.removeEventListener('abort', abort)
+        resolve(line)
+      }
+      if (signal?.aborted) abort()
+      else signal?.addEventListener('abort', abort, { once: true })
+      this.onChange()
     })
+  }
+
+  answer(line) {
+    const resolve = this.resolveLine
+    if (!resolve) return
+    this.resolveLine = null
+    this.question = ''
+    this.buffer = ''
+    this.cursor = 0
+    resolve(line)
+    this.onChange()
   }
 }
 
@@ -563,13 +558,21 @@ class LineInput {
 async function createHarness(mode, callbacks) {
   const { DeepSeekHarness } = await import('@deepseek-ai/dsh-sdk-client')
   const harness = new DeepSeekHarness({
+    dshBin: RUNTIME,
     dshHome: HOME,
     cwd: process.cwd(),
     provider: PROVIDER,
     model: MODEL,
+    reasoningEffort: EFFORT,
     approvalRequests: true,
     initializeTimeoutMs: INIT_TIMEOUT,
-    env: { ...process.env, DSH_PERMISSION_MODE: mode.env },
+    patches: [fileURLToPath(new URL('./runtime-ui.yml', import.meta.url))],
+    env: {
+      ...process.env,
+      DSH_PERMISSION_MODE: mode.sandbox,
+      DSH_CLI_LIVE_UI: INTERACTIVE_TERMINAL ? '1' : '0',
+      DSH_CLI_ROUTE: JSON.stringify({ provider: PROVIDER, model: MODEL, reasoningEffort: EFFORT }),
+    },
     onUserQuestion: callbacks.onUserQuestion,
   })
   await harness.client.start()
@@ -577,6 +580,7 @@ async function createHarness(mode, callbacks) {
     if (method !== 'approval/request') throw new Error(`unsupported request: ${method}`)
     return callbacks.onApproval(params)
   })
+  callbacks.onClient(harness.client)
   await harness.start()
   return harness
 }
@@ -605,144 +609,260 @@ async function mainInteractive(cli) {
     }
   }
 
-  let modeIndex = Math.max(0, MODES.findIndex((m) => m.id === cli.mode))
-  if (modeIndex < 0) modeIndex = 0
-  let mode = MODES[modeIndex]
+  const initialMode = MODES.find((mode) => mode.id === cli.mode) ?? MODES[0]
   let harness = null
   let session = null
-  let currentSessionId = null
-  let planOn = false
+  let state = {}
+  let defaults = { model: MODEL, provider: PROVIDER, reasoningEffort: EFFORT,
+    sandbox: MODES[0].sandbox, approval: MODES[0].approval }
+  let turn = null
+  let lastTool = null
+  let closing = false
+  let interactions = Promise.resolve()
+  let finish
+  const done = new Promise((resolve) => { finish = resolve })
+  const launch = performance.now()
+
+  function resetState() {
+    state = { ...defaults, cwd, plan: false, opened: false }
+    lastTool = null
+  }
+  resetState()
+
+  const currentMode = () => MODES.find((mode) => mode.sandbox === state.sandbox
+    && mode.approval === state.approval && Boolean(mode.plan) === state.plan)
+  const modeLabel = () => currentMode()?.label ?? `${state.plan ? '计划 · ' : ''}${state.approval === 'never' ? '免审批' : '按需审批'}`
+  const modelLabel = () => `${oneLine(state.model)} · 推理 ${oneLine(state.reasoningEffort ?? '自动')}`
+  const redraw = () => footer?.draw()
+
+  async function close(code = 0) {
+    if (closing) return
+    closing = true
+    input.stop()
+    clearInterval(ticker)
+    footer?.stop()
+    footer = null
+    try {
+      await harness?.close()
+    } finally {
+      finish(code)
+    }
+  }
+
+  function showError(error) {
+    out(red(`! ${clean(error?.message ?? error)}`))
+  }
+
+  async function action(task) {
+    if (input.busy || closing) return
+    input.busy = true
+    try {
+      await task()
+    } catch (error) {
+      if (!closing) showError(error)
+    } finally {
+      input.busy = false
+      redraw()
+    }
+  }
 
   const input = new LineInput({
-    onMode: () => { cycleMode().catch((error) => out(red(`! ${error?.message ?? error}`))) },
-    onSubmit: (line) => { handleLine(line).catch((error) => out(red(`! ${error?.message ?? error}`))) },
+    onMode: () => action(() => {
+      const index = MODES.indexOf(currentMode())
+      return applyMode(MODES[(index + 1) % MODES.length])
+    }),
+    onSubmit: (line) => action(() => handleLine(line)),
+    onChange: redraw,
+    onEnd: () => close().catch(showError),
     onKey: (key) => {
-      if (key === 'interrupt' || key === 'ctrl-c') {
-        input.stop()
-        out('')
-        out(dim('interrupted — session history is saved'))
-        process.exit(130)
-      }
+      if (key === 'ctrl-c') void close(130).catch(showError)
+      if (key === 'ctrl-d') void close().catch(showError)
       if (key === 'expand') {
-        printer.expandLast()
-        return
-      }
-      if (key === 'ctrl-d') {
-        input.stop()
-        process.exit(0)
+        if (!lastTool) { out(dim('  暂无工具输出')); return }
+        out(dim(`  ── ${lastTool.name} (${lastTool.ok ? 'ok' : 'fail'}) ──`))
+        if (lastTool.lines.length) out(lastTool.lines.map((line) => dim('  | ') + line).join('\n'))
       }
     },
   })
 
-  async function startHarness(nextMode, resumeId) {
-    harness?.close?.().catch(() => {})
-    harness = await createHarness(nextMode, {
-      onUserQuestion: async (request) => {
+  const serializeInteraction = (task) => {
+    const pending = interactions.then(() => closing ? undefined : task())
+    interactions = pending.catch(() => {})
+    return pending
+  }
+
+  function callbacks() {
+    return {
+      onClient: observeClient,
+      onUserQuestion: (request, { signal }) => serializeInteraction(async () => {
         const questions = Array.isArray(request.questions) ? request.questions : []
         const answers = []
         for (const q of questions) {
-          out('')
-          out(yellow('? ') + (q.question ?? q.header ?? 'question'))
+          signal.throwIfAborted()
+          out(yellow('? ') + clean(q.question ?? q.header ?? 'question'))
+          if (q.detail) out(clean(q.detail))
           const options = Array.isArray(q.options) ? q.options : []
-          options.forEach((o, i) => out(dim(`  ${i + 1}. ${o.label ?? ''}${o.description ? ` — ${o.description}` : ''}`)))
-          const raw = (await input.readLine(dim('  answer (number or text): '))).trim()
+          options.forEach((o, i) => out(dim(`  ${i + 1}. ${oneLine(o.label ?? '')}${o.description ? ` — ${oneLine(o.description)}` : ''}`)))
+          const raw = await input.readLine('回答（序号或文字）> ', signal)
           if (!raw) { answers.push({ id: q.id, selected: [], custom: '' }); continue }
           const numbers = raw.split(/[,\s]+/).map(Number).filter((n) => Number.isInteger(n) && n >= 1 && n <= options.length)
           if (options.length && numbers.length) answers.push({ id: q.id, selected: numbers.map((n) => options[n - 1].label) })
           else answers.push({ id: q.id, selected: [], custom: raw })
         }
         return { answers }
-      },
-      onApproval: async (params) => {
-        if (!nextMode.ask) return { outcome: 'allowed-once' }
-        out('')
-        out(yellow('! ') + `approval required: ${params.toolName ?? 'tool'}${params.reason ? ` — ${params.reason}` : ''}`)
-        const answer = (await input.readLine(dim('  allow? [y]once / [a]lways / [N]o: '))).trim().toLowerCase()
-        if (answer === 'a') { nextMode.ask = false; return { outcome: 'allowed-once' } }
+      }),
+      onApproval: (params) => serializeInteraction(async () => {
+        out(yellow('! ') + `需要审批 · ${oneLine(params.toolName ?? 'tool')}${params.reason ? ` — ${oneLine(params.reason)}` : ''}`)
+        const answer = (await input.readLine('允许本次执行？[y/N] > ')).toLowerCase()
         return { outcome: answer === 'y' ? 'allowed-once' : 'rejected' }
-      },
-    })
-    session = resumeId ? await harness.resumeSession(resumeId) : harness.session()
-    currentSessionId = session.id
-    return session
+      }),
+    }
   }
 
-  async function applyMode(nextMode, { relanch }) {
-    const sandboxChanged = nextMode.env !== mode.env
-    mode = nextMode
-    if (relanch && sandboxChanged) {
-      out(dim(`[mode] ${mode.label} — restarting runtime...`))
-      await startHarness(mode, currentSessionId)
-    }
-    if (mode.plan !== planOn) {
-      planOn = Boolean(mode.plan)
-      await runTurn(planOn ? '/plan' : '/plan off', { quiet: true })
-    }
-    out(dim(`[mode] ${mode.label}`))
-  }
+  const metadata = new Set(['model/selection', 'request/header', 'sandbox/mode', 'approval/policy', 'plan/mode', 'working-directory/change'])
 
-  async function cycleMode() {
-    if (input.busy) return
-    const next = MODES[(modeIndex + 1) % MODES.length]
-    modeIndex = (modeIndex + 1) % MODES.length
-    await applyMode(next, { relanch: true })
-  }
-
-  const rendererFor = (sessionId) => makeRenderer(sessionId, input)
-
-  async function runTurn(text, options = {}) {
-    input.busy = true
-    input.setBusy(true)
-    if (!options.quiet) {
-      input.clearInput()
-      out('')
-      out(dim('> ') + text)
-    }
-    const started = Date.now()
-    try {
-      const result = await session.run(text, { onNotification: options.quiet ? () => {} : rendererFor(session.id) })
-      await printer.idle()
-      if (!options.quiet && result.finalResponse?.trim()) {
-        // nothing: the renderer already printed committed assistant messages
+  function observeClient(client) {
+    const changes = client.subscribe((note) => note.method === 'dsh-cli.state' || note.method === 'dsh-cli.config'
+      || (note.method === 'session.event' && metadata.has(note.params.event?.type)))
+    void (async () => {
+      try {
+        for await (const note of changes) observeState(note)
+      } catch (error) {
+        if (harness && !closing) showError(error)
       }
-      out(dim(`  ${((Date.now() - started) / 1000).toFixed(1)}s`))
+    })()
+  }
+
+  function observeState(notification) {
+    const { sessionId, event } = notification.params
+    if (notification.method === 'dsh-cli.config') {
+      const { selection, preset } = notification.params
+      const mode = MODES.find((item) => item.preset === preset)
+      const { model, provider, reasoningEffort } = selection
+      defaults = { model, provider, reasoningEffort, sandbox: mode?.sandbox ?? defaults.sandbox,
+        approval: mode?.approval ?? defaults.approval }
+      if (!state.opened) Object.assign(state, defaults)
+      redraw()
+      return
+    }
+    if (sessionId !== session?.id) return
+    state.opened = true
+    if (notification.method === 'dsh-cli.state') {
+      const { sandbox, approval, plan, selection } = notification.params
+      if (sandbox) state.sandbox = sandbox
+      if (approval) state.approval = approval
+      if (typeof plan === 'boolean') state.plan = plan
+      if (selection) {
+        const effort = selection.model === defaults.model && selection.provider === defaults.provider ? defaults.reasoningEffort : undefined
+        Object.assign(state, { ...selection, reasoningEffort: selection.reasoningEffort ?? effort })
+      }
+    } else {
+      const data = event.data
+      switch (event.type) {
+        case 'request/header': {
+          const { model, provider, reasoningEffort } = data.header.config
+          Object.assign(state, { model, provider, reasoningEffort })
+          break
+        }
+        case 'model/selection': Object.assign(state, { ...data, reasoningEffort: data.reasoningEffort }); break
+        case 'sandbox/mode': state.sandbox = data.mode; break
+        case 'approval/policy': state.approval = data.policy; break
+        case 'plan/mode': state.plan = data.active; break
+        case 'working-directory/change': state.cwd = data.cwd; break
+      }
+    }
+    redraw()
+  }
+
+  async function selectSession(id) {
+    const previous = { session, state, lastTool }
+    session = harness.session(id)
+    resetState()
+    try {
+      if (id) {
+        session = await harness.resumeSession(id)
+        state.cwd = await session.getWorkingDirectory()
+      }
     } catch (error) {
-      out(red(`! ${error?.message ?? error}`))
+      session = previous.session
+      state = previous.state
+      lastTool = previous.lastTool
+      throw error
+    }
+  }
+
+  async function applyMode(mode) {
+    if (state.plan && !mode.plan) await runCommand('/plan off')
+    await runCommand(`/permission ${mode.preset}`)
+    if (mode.plan && !state.plan) await runCommand('/plan')
+    if (!footer) out(dim(`权限 ${modeLabel()} · ${state.sandbox}`))
+  }
+
+  async function runCommand(command) {
+    const result = await session.run(command)
+    if (result.finishReason === 'error') throw new Error(result.finalResponse || command)
+    return result.finalResponse
+  }
+
+  async function runTurn(text) {
+    turn = new TurnDisplay()
+    out(`\n${bold('> ')}${clean(text)}\n`)
+    if (!footer) out(dim('· 等待模型响应…'))
+    try {
+      const result = await session.run(text, {
+        onNotification(notification) {
+          if (closing || notification.params.sessionId !== session.id) return
+          if (notification.method === 'dsh-cli.stream') turn.stream(notification.params)
+          if (notification.method === 'session.event') turn.event(notification.params.event, (tool) => { lastTool = tool })
+        },
+      })
+      if (closing) return
+      turn.endThinking()
+      const answer = clean(result.finalResponse ?? '').trimEnd()
+      if (result.finishReason === 'error') throw new Error(turn.error || answer || '运行失败')
+      if (answer && answer !== turn.printedText) out(renderMarkdown(answer))
+      const kind = result.finishReason
+      const complete = !kind || ['completed', 'stop', 'success', 'ok'].includes(kind)
+      const time = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+      out(dim(`└ ${complete ? '完成' : kind} · ${elapsed(turn.started)} · ${time}`))
+    } catch (error) {
+      if (!closing) {
+        turn.endThinking()
+        showError(error)
+        out(dim(`└ 失败 · ${elapsed(turn.started)}`))
+      }
     } finally {
-      input.busy = false
-      input.setBusy(false)
-      input.renderInput()
+      turn = null
+      redraw()
     }
   }
 
   async function handleLine(line) {
+    if (!line.trim()) return
     if (!line.startsWith('/')) { await runTurn(line); return }
     const [command, ...rest] = line.slice(1).split(/\s+/)
     const arg = rest.join(' ').trim()
     switch (command.toLowerCase()) {
       case 'exit':
       case 'quit':
-        input.stop()
-        await harness?.close?.()
-        process.exit(0)
+        await close()
+        return
       case 'help':
         out(HELP)
         return
-      case 'mode':
-        out(MODES.map((m, i) => `  ${i + 1}. ${m.label}${m.id === mode.id ? ' *' : ''}`).join('\n'))
-        if (arg) {
-          const index = Number(arg) - 1
-          if (Number.isInteger(index) && MODES[index]) { modeIndex = index; await applyMode(MODES[index], { relanch: true }) }
-        }
+      case 'mode': {
+        if (!arg) { out(MODES.map((mode, i) => `  ${i + 1}. ${mode.label}${mode === currentMode() ? ' *' : ''}`).join('\n')); return }
+        const mode = MODES.find((entry, i) => String(i + 1) === arg || entry.id === arg)
+        if (!mode) throw new Error('用法 /mode <1–4>')
+        await applyMode(mode)
         return
+      }
       case 'plan':
-        planOn = !planOn
-        await runTurn(planOn ? '/plan' : '/plan off', { quiet: true })
-        out(dim(`[plan] ${planOn ? 'on' : 'off'}`))
+        if (!arg || arg === 'off') await applyMode(arg === 'off' || state.plan ? MODES[0] : MODES[2])
+        else { await applyMode(MODES[2]); await runTurn(line) }
         return
       case 'new':
-        session = harness.session()
-        currentSessionId = session.id
+        await selectSession()
         out(dim(`[new] ${shortId(session.id)}`))
         return
       case 'list':
@@ -752,38 +872,55 @@ async function mainInteractive(cli) {
         const sessions = listSessions(cwd)
         const id = /^\d+$/.test(arg) ? sessions[Number(arg) - 1]?.id : (arg.startsWith('session-') ? arg : sessions.find((s) => shortId(s.id) === arg)?.id)
         if (!id) { out(red('no such session')); return }
-        try {
-          session = await harness.resumeSession(id)
-          currentSessionId = id
-          out(dim(`[resume] ${shortId(id)}`))
-        } catch (error) { out(red(`! ${error?.message ?? error}`)) }
+        await selectSession(id)
+        out(dim(`[resume] ${shortId(id)}`))
         return
       }
       case 'status':
-        out(dim(`session ${currentSessionId}  mode ${mode.label}  model ${PROVIDER}/${MODEL}`))
+        out(`会话 ${session.id}\n模型 ${oneLine(state.provider)}/${modelLabel()}\n权限 ${modeLabel()} · ${state.sandbox}\n工作区 ${cwd}\n当前目录 ${state.cwd}\n会话库 ${HOME}`)
         return
       case 'compact':
       case 'goal':
-      case 'permission':
         await runTurn(line)
         return
+      case 'permission':
+        if (arg) await runTurn(line)
+        else out(`权限 ${modeLabel()} · ${state.sandbox}\n${dim('/mode 查看权限模式')}`)
+        return
       default:
-        out(red(`unknown command: /${command}`))
+        out(red(`未知命令 /${oneLine(command)} · /help 查看命令`))
     }
   }
 
-  const initialMode = MODES[modeIndex]
-  const resumeId = cli.resume ?? (cli.continue ? listSessions(cwd)[0]?.id : null)
-  renderSplash(initialMode)
-  out(dim('starting runtime...'))
-  await startHarness(initialMode, resumeId)
-  out(dim(`ready  ·  session ${shortId(currentSessionId)}  ·  ${cwd}`))
-  out('')
-  input.start()
-  input.renderInput()
-
-  // Keep the process alive; input drives everything.
-  await new Promise(() => {})
+  out(`\n${cyan('◆')} ${bold('DeepSeek Harness')} ${dim(`dsh-cli v${VERSION}`)}\n  ${dim(cwd)}\n`)
+  if (input.raw) {
+    footer = new TerminalFooter(process.stdout, { dim, accent: cyan }, () => {
+      const phase = harness ? turn?.phase : 'startup'
+      const started = turn?.started ?? launch
+      const spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'][Math.floor((performance.now() - started) / 90) % 10]
+      const status = input.question ? '等待你的输入' : phase ? `${spinner} ${liveLabels[phase]} · ${elapsed(started)}` : ''
+      return {
+        status,
+        preview: input.question ? '' : oneLine(turn?.preview ?? '').slice(-100),
+        prompt: input.question || '> ', buffer: input.buffer, cursor: input.cursor,
+        model: modelLabel(), permission: `${modeLabel()} · ${state.sandbox} · Shift+Tab`,
+      }
+    })
+    footer.start()
+  } else out(dim('正在启动运行时…'))
+  const ticker = setInterval(() => { if (turn || !harness) redraw() }, 90)
+  ticker.unref()
+  try {
+    harness = await createHarness(MODES[0], callbacks())
+    const resumeId = cli.resume ?? (cli.continue ? listSessions(cwd)[0]?.id : null)
+    await selectSession(resumeId ?? undefined)
+    if (cli.mode) await applyMode(initialMode)
+    out(dim(`就绪 · 会话 ${shortId(session.id)} · /help`))
+    input.start()
+    return await done
+  } finally {
+    await close()
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -811,13 +948,15 @@ async function runOneShot(cli) {
   const { DeepSeekHarness } = await import('@deepseek-ai/dsh-sdk-client')
   const mode = MODES.find((m) => m.id === cli.mode) ?? MODES[0]
   const harness = new DeepSeekHarness({
+    dshBin: RUNTIME,
     dshHome: HOME,
     cwd: process.cwd(),
     provider: PROVIDER,
     model: MODEL,
+    reasoningEffort: EFFORT,
     approvalRequests: false,
     initializeTimeoutMs: INIT_TIMEOUT,
-    env: { ...process.env, DSH_PERMISSION_MODE: mode.env },
+    env: { ...process.env, DSH_PERMISSION_MODE: mode.sandbox },
   })
   try {
     await harness.start()
@@ -835,7 +974,7 @@ async function runOneShot(cli) {
 // args
 // ---------------------------------------------------------------------------
 function parseArgs(argv) {
-  const cli = { mode: 'default', print: null, resume: null, continue: false, list: false, help: false, version: false }
+  const cli = { mode: null, print: null, resume: null, continue: false, list: false, help: false, version: false }
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i]
     if (a === '--help' || a === '-h') cli.help = true
@@ -844,7 +983,10 @@ function parseArgs(argv) {
     else if (a === '--print' || a === '-p') cli.print = argv[++i] ?? ''
     else if (a === '--resume' || a === '-r') cli.resume = argv[++i] ?? null
     else if (a === '--continue' || a === '-c') cli.continue = true
-    else if (a === '--mode') cli.mode = argv[++i] ?? 'default'
+    else if (a === '--mode') {
+      cli.mode = argv[++i]
+      if (!MODES.some((mode) => mode.id === cli.mode)) throw new Error('--mode <default|auto|plan|full>')
+    }
     else if (a === '--splash') cli.splash = true
     else if (a.startsWith('-')) throw new Error(`unknown option: ${a}`)
     else if (cli.print === null) cli.print = a
@@ -860,13 +1002,22 @@ const HELP = `${bold('dsh-cli')} ${VERSION} — Claude-style terminal client for
   dsh-cli -r <id>         resume a specific session
   dsh-cli -p "prompt"     one-shot, print the final answer
   dsh-cli --list          list sessions in this workspace
+  dsh-cli --splash        preview the full splash artwork
+  dsh-cli --mode <mode>   default, auto, plan or full
 
 keys
   shift+tab               cycle permission modes: 默认 -> 自动(工作区内) -> 计划 -> 完全访问
-  ctrl+c                  interrupt/exit, ctrl+d exit, up/down history
+  ctrl+c / ctrl+d         interrupt and exit / exit
+  ctrl+o                  expand the last tool output
+  up/down                 input history
 
 commands
-  /mode [n]  /plan  /new  /list  /resume <n|id>  /status  /compact  /exit
+  /mode [n]  /plan [off]  /permission [preset]  /new  /list
+  /resume <n|id>  /status  /compact  /goal  /exit
+
+environment
+  DSH_CLI_PROVIDER / DSH_CLI_MODEL / DSH_CLI_EFFORT  configure the model route
+  DSH_CLI_SHOW_REASONING=1                          show model reasoning text
 `
 
 // ---------------------------------------------------------------------------
@@ -892,6 +1043,6 @@ async function main() {
 main()
   .then((code) => { if (typeof code === 'number') process.exitCode = code })
   .catch((error) => {
-    out(red(`! ${error?.stack ?? error}`))
+    out(red(`! ${clean(process.env.DSH_CLI_DEBUG === '1' ? (error?.stack ?? error) : (error?.message ?? error))}`))
     process.exitCode = 1
   })
